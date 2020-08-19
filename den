@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+
+# bw unlock --raw
+# pip3 install python-gnupg
+
+import gnupg
+from pathlib import Path
+from getpass import getpass
+from subprocess import Popen, PIPE
+import json
+from sys import exit
+
+import sys
+import argparse
+import re
+import yaml
+import pyotp
+import pyperclip
+from fuzzywuzzy import process
+
+class bwCLI:
+    def __init__(self):
+        pass
+
+    def call(self, args):
+        bw_proc = Popen(args, shell=False, stdout=PIPE, stderr=PIPE)
+        stdout, stderr = [s.decode('utf-8') for s in bw_proc.communicate()]
+        return (bw_proc.returncode, stdout, stderr)
+
+    def unlock(self, passphrase):
+        return self.call(['bw', 'unlock', passphrase, '--raw'])
+
+    def lock(self, passphrase):
+        return self.call(['bw', 'lock', '--raw'])
+
+    def status(self, session):
+        return self.call(['bw', 'status', '--raw', '--session', session])
+
+class bwSession:
+    def __init__(self):
+        self.fingerprint = 'C9CB0C945B583DD3E65DDC376B5C20C74C63902A'
+        self.gpg_home = Path.home() / '.gnupg'
+        self.encrypted_session = Path.home() / '.bw-session.asc'
+        self.gpg = gnupg.GPG(gnupghome=str(self.gpg_home), use_agent=True)
+        self.bwcli = bwCLI()
+        keys_pub = self.gpg.list_keys().key_map
+        key = keys_pub.get(self.fingerprint)
+        if not key:
+            exit("Could not find fingerprint in public keyring: '{}'".format(self.fingerprint))
+        keys_priv = self.gpg.list_keys().key_map
+        key = keys_priv.get(self.fingerprint)
+        if not key:
+            exit("Could not find fingerprint in secrets keyring: '{}'".format(self.fingerprint))
+
+    def new_session(self):
+        rc = 1
+        while (rc != 0):
+            passphrase = getpass()
+            rc, out, err = self.bwcli.unlock(passphrase)
+        self.session = out
+        if not self.session_unlocked():
+            exit("Session failed to unlock")
+        self.encrypt_session()
+
+    def decrypt_session(self):
+        self.session = ''
+        if not self.encrypted_session.is_file():
+            print("No session file at: '{}'".format(self.encrypted_session))
+            return
+        with open(self.encrypted_session, 'rb') as f:
+            session = self.gpg.decrypt_file(f)
+        if not session:
+            exit("failed to decrypt session try this command\n  gpg --decrypt '{}'".format(self.encrypted_session))
+        self.session = str(session)
+
+    def encrypt_session(self):
+        self.gpg.encrypt(self.session, self.fingerprint, output=self.encrypted_session)
+
+    def session_unlocked(self):
+        rc, out, err = self.bwcli.status(self.session)
+        if rc != 0:
+            exit("'status' command failed. returncode: '{}' | stdout: '{}' | stderr: '{}'".format(rc, out, err))
+        lines = [l for l in out.splitlines() if l.strip()]
+        json_lines = []
+        for line in lines:
+            try: json_lines.append(json.loads(line))
+            except: pass
+        assert(len(json_lines) == 1)
+        assert('status' in json_lines[0])
+        status = json_lines[0]['status'].lower()
+        assert(status in ('locked', 'unlocked'))
+        if status == 'unlocked':
+            return True
+        return False
+
+def cli_parse():
+    parser = argparse.ArgumentParser(description='Simplified interface for copying Passwords and TOTPs from Bitwarden')
+    group = parser.add_mutually_exclusive_group()
+    parser.add_argument('secret',
+                        nargs='?',
+                        type=str,
+                        help='fuzzy search secret name',
+                        metavar='S')
+    parser.add_argument('-f',
+                        '--folder',
+                        type=str,
+                        help='fuzzy search folder names',
+                        metavar='F')
+    parser.add_argument('-c',
+                        '--no-clip',
+                        action='store_true',
+                        help='if set, do not use clipboard')
+    group.add_argument ('-a',
+                        '--all-fields',
+                        action='store_true',
+                        help='return all fields for the secrect')
+    group.add_argument ('-p',
+                        '--password',
+                        action='store_true',
+                        help='return password')
+    group.add_argument ('-o',
+                        '--totp',
+                        action='store_true',
+                        help='return totp')
+    group.add_argument ('-s',
+                        '--session',
+                        action='store_true',
+                        help='return session token')
+    group.add_argument ('-n',
+                        '--new-session',
+                        action='store_true',
+                        help='lock and unlock to create new session')
+    parser.add_argument('-y',
+                        '--yml-conf',
+                        type=str,
+                        help='path to yml conf file, default is {}'.format('test'))
+
+    if not len(sys.argv) > 1:
+        parser.print_help(sys.stderr)
+        parser.error("No arguments were passed")
+
+    # get args and values as dict
+    args = vars(parser.parse_args())
+
+    if args['folder'] and args['secret'] is None:
+        parser.print_help(sys.stderr)
+        parser.error("need to pass 'S' if using '-f'")
+
+    bwsess = bwSession()
+
+    if args['yml_conf']:
+        # parse conf file
+        pass
+
+    if args['new_session']:
+        bwsess.new_session()
+        if args['no_clip']:
+            print(bwsess.session)
+        else:
+            pyperclip.copy(bwsess.session)
+        return
+
+    if args['session']:
+        bwsess.decrypt_session()
+        if args['no_clip']:
+            print(bwsess.session)
+        else:
+            pyperclip.copy(bwsess.session)
+        return
+
+    if args['all_fields'] or args['password'] or args['totp']:
+        if args['secret'] is None:
+            parser.print_help(sys.stderr)
+            parser.error("need to pass 'S'")
+
+    return args
+
+
+cli_parse()
+
