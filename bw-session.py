@@ -13,6 +13,8 @@ from sys import exit
 #TODO:
 #  - check for fingerprint in secrets ring
 #  - cli: config (dirs/files and fingerprint), default with no args returns session, new, status
+#  - gpg passphrass prompt
+#  - lock gpg and bitwarden when lockscreen is activated or after a period of time
 
 class bwSession:
     def __init__(self):
@@ -52,7 +54,7 @@ class bwSession:
         with open(self.encrypted_session, 'rb') as f:
             session = self.gpg.decrypt_file(f)
         if not session:
-            exit("failed to decrypt session try this command\n  gpg --decrypt '{}'".format(self.encrypt_session))
+            exit("failed to decrypt session try this command\n  gpg --decrypt '{}'".format(self.encrypted_session))
         self.session = session
 
     def encrypt_session(self):
