@@ -134,24 +134,24 @@ def cli_parse():
     parser.add_argument('-f',
                         '--folder',
                         type=str,
-                        help='folder names',
+                        help='folder name',
                         metavar='F')
     parser.add_argument('-c',
                         '--no-clip',
                         action='store_true',
-                        help='if set, do not use clipboard')
+                        help='do not use clipboard')
     group.add_argument ('-a',
                         '--all-fields',
                         action='store_true',
-                        help='return all fields for the secrect')
+                        help='return all fields of [S]')
     group.add_argument ('-p',
                         '--password',
                         action='store_true',
-                        help='return password')
+                        help='return password of [S]')
     group.add_argument ('-o',
                         '--totp',
                         action='store_true',
-                        help='return totp')
+                        help='return totp of [S]')
     group.add_argument ('-s',
                         '--session',
                         action='store_true',
@@ -159,7 +159,7 @@ def cli_parse():
     group.add_argument ('-n',
                         '--new-session',
                         action='store_true',
-                        help='lock and unlock to create new session')
+                        help='lock and unlock bitwarden for new session')
     group.add_argument ('-z',
                         '--completions',
                         action='store_true',
