@@ -1,0 +1,7 @@
+#compdef den
+
+function _den () {
+    _values 'bitwarden secrets' $(den -z)
+}
+
+_den

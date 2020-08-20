@@ -8,15 +8,12 @@ from pathlib import Path
 from getpass import getpass
 from subprocess import Popen, PIPE
 import json
-from sys import exit
-
-import sys
 import argparse
-import re
+import sys
+import pyperclip
+
 import yaml
 import pyotp
-import pyperclip
-from fuzzywuzzy import process
 
 class bwCLI:
     def __init__(self):
@@ -30,56 +27,77 @@ class bwCLI:
     def unlock(self, passphrase):
         return self.call(['bw', 'unlock', passphrase, '--raw'])
 
-    def lock(self, passphrase):
+    def lock(self):
         return self.call(['bw', 'lock', '--raw'])
 
     def status(self, session):
         return self.call(['bw', 'status', '--raw', '--session', session])
 
-class bwSession:
+class gpgHelper:
     def __init__(self):
         self.fingerprint = 'C9CB0C945B583DD3E65DDC376B5C20C74C63902A'
         self.gpg_home = Path.home() / '.gnupg'
-        self.encrypted_session = Path.home() / '.bw-session.asc'
         self.gpg = gnupg.GPG(gnupghome=str(self.gpg_home), use_agent=True)
-        self.bwcli = bwCLI()
+
         keys_pub = self.gpg.list_keys().key_map
         key = keys_pub.get(self.fingerprint)
         if not key:
-            exit("Could not find fingerprint in public keyring: '{}'".format(self.fingerprint))
+            sys.exit("Could not find fingerprint in public keyring: '{}'".format(self.fingerprint))
         keys_priv = self.gpg.list_keys().key_map
         key = keys_priv.get(self.fingerprint)
         if not key:
-            exit("Could not find fingerprint in secrets keyring: '{}'".format(self.fingerprint))
+            sys.exit("Could not find fingerprint in secrets keyring: '{}'".format(self.fingerprint))
+
+    def decrypt_file(self, file_path):
+        self.verify_asc_file(file_path)
+        with open(file_path, 'rb') as f:
+            result = self.gpg.decrypt_file(f)
+        return str(result)
+
+    def encrypt_to_file(self, content, file_path):
+        if not content:
+            sys.exit("Nothing was given to encrypt to '{}'".format(file_path))
+        self.gpg.encrypt(content, self.fingerprint, output=file_path)
+        self.verify_asc_file(file_path)
+
+    def verify_asc_file(self, file_path):
+        # TODO: check file extension is 'asc'
+        if not file_path.is_file():
+            sys.exit("No encrypted file at: '{}'".format(file_path))
+        # TODO: check file size is not zero
+        # TODO: check file contents are as expected
+        pass
+
+class bwSession:
+    def __init__(self, gpg_helper):
+        self.bwcli = bwCLI()
+        self.gpg = gpg_helper
+        self.encrypted_session = Path.home() / '.bw-session.asc'
+        self.session = ''
 
     def new_session(self):
+        rc, out, err = self.bwcli.lock()
+        if rc != 0:
+            sys.exit("Failed to lock bitwarden: {} {}".format(out, err))
         rc = 1
         while (rc != 0):
             passphrase = getpass()
             rc, out, err = self.bwcli.unlock(passphrase)
         self.session = out
         if not self.session_unlocked():
-            exit("Session failed to unlock")
-        self.encrypt_session()
+            sys.exit("Session failed to unlock")
+        self.gpg.encrypt_to_file(self.session, self.encrypted_session)
 
     def decrypt_session(self):
-        self.session = ''
-        if not self.encrypted_session.is_file():
-            print("No session file at: '{}'".format(self.encrypted_session))
-            return
-        with open(self.encrypted_session, 'rb') as f:
-            session = self.gpg.decrypt_file(f)
-        if not session:
-            exit("failed to decrypt session try this command\n  gpg --decrypt '{}'".format(self.encrypted_session))
-        self.session = str(session)
-
-    def encrypt_session(self):
-        self.gpg.encrypt(self.session, self.fingerprint, output=self.encrypted_session)
+        self.session = self.gpg.decrypt_file(self.encrypted_session)
+        if not self.session:
+            # TODO: this error seems miss leading could be an empty file
+            sys.exit("failed to decrypt session try this command\n  gpg --decrypt '{}'".format(self.encrypted_session))
 
     def session_unlocked(self):
         rc, out, err = self.bwcli.status(self.session)
         if rc != 0:
-            exit("'status' command failed. returncode: '{}' | stdout: '{}' | stderr: '{}'".format(rc, out, err))
+            sys.exit("'status' command failed. returncode: '{}' | stdout: '{}' | stderr: '{}'".format(rc, out, err))
         lines = [l for l in out.splitlines() if l.strip()]
         json_lines = []
         for line in lines:
@@ -93,18 +111,30 @@ class bwSession:
             return True
         return False
 
+class bwHelper:
+    def __init__(self):
+        pass
+
+    #TODO: get specific secret
+    #TODO: parse all secrets
+    #TODO: encrypt to cache
+    #TODO: decrypt cache
+    #TODO: -z command option
+    #TODO: sync bitwarden / refresh cache on new session
+
+
 def cli_parse():
     parser = argparse.ArgumentParser(description='Simplified interface for copying Passwords and TOTPs from Bitwarden')
     group = parser.add_mutually_exclusive_group()
     parser.add_argument('secret',
                         nargs='?',
                         type=str,
-                        help='fuzzy search secret name',
+                        help='secret name',
                         metavar='S')
     parser.add_argument('-f',
                         '--folder',
                         type=str,
-                        help='fuzzy search folder names',
+                        help='folder names',
                         metavar='F')
     parser.add_argument('-c',
                         '--no-clip',
@@ -130,6 +160,10 @@ def cli_parse():
                         '--new-session',
                         action='store_true',
                         help='lock and unlock to create new session')
+    group.add_argument ('-z',
+                        '--completions',
+                        action='store_true',
+                        help='list cached secret names for shell completion')
     parser.add_argument('-y',
                         '--yml-conf',
                         type=str,
@@ -146,11 +180,15 @@ def cli_parse():
         parser.print_help(sys.stderr)
         parser.error("need to pass 'S' if using '-f'")
 
-    bwsess = bwSession()
+    gpghelp = gpgHelper()
+    bwsess = bwSession(gpghelp)
 
     if args['yml_conf']:
         # parse conf file
         pass
+
+    if args['completions']:
+        return
 
     if args['new_session']:
         bwsess.new_session()
