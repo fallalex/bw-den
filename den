@@ -49,6 +49,8 @@ class bwCLI:
 
 class gpgHelper:
     def __init__(self):
+        # stat.filemode(0o100600) -> '-rw-------'
+        self.perms = 0o100600
         self.fingerprint = 'C9CB0C945B583DD3E65DDC376B5C20C74C63902A'
         self.gpg_home = Path.home() / '.gnupg'
         self.gpg = gnupg.GPG(gnupghome=str(self.gpg_home), use_agent=True)
@@ -72,6 +74,7 @@ class gpgHelper:
         if not content:
             sys.exit("Nothing was given to encrypt to '{}'".format(file_path))
         self.gpg.encrypt(content, self.fingerprint, output=file_path)
+        file_path.chmod(self.perms)
         self.verify_asc_file(file_path)
 
     def verify_asc_file(self, file_path):
@@ -79,6 +82,7 @@ class gpgHelper:
         if not file_path.is_file():
             sys.exit("No encrypted file at: '{}'".format(file_path))
         assert(file_path.stat().st_size > 0)
+        assert(file_path.stat().st_mode == self.perms)
         with open(file_path, 'r') as f:
             content = f.read()
         content = content.strip().splitlines()
