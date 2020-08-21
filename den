@@ -75,12 +75,15 @@ class gpgHelper:
         self.verify_asc_file(file_path)
 
     def verify_asc_file(self, file_path):
-        # TODO: check file extension is 'asc'
+        assert(file_path.suffix == '.asc')
         if not file_path.is_file():
             sys.exit("No encrypted file at: '{}'".format(file_path))
-        # TODO: check file size is not zero
-        # TODO: check file contents are as expected
-        pass
+        assert(file_path.stat().st_size > 0)
+        with open(file_path, 'r') as f:
+            content = f.read()
+        content = content.strip().splitlines()
+        assert('-----BEGIN PGP MESSAGE-----' in content)
+        assert('-----END PGP MESSAGE-----' in content)
 
 class bwSession:
     def __init__(self, gpg_helper):
@@ -129,8 +132,8 @@ class bwHelper:
     def __init__(self):
         pass
 
-    #TODO: get specific secret
-    #TODO: parse all secrets
+    #TODO: get specific item
+    #TODO: parse all items
     #TODO: encrypt to cache
     #TODO: decrypt cache
     #TODO: -z command option
@@ -181,9 +184,9 @@ def cli_parse():
                         action='store_true',
                         help='return session token')
     group.add_argument ('-r',
-                        '--new-session',
+                        '--refresh',
                         action='store_true',
-                        help='lock and unlock bitwarden for new session')
+                        help='lock then unlock bitwarden, sync bitwarden, update cache')
     #TODO: could try to do a fancy completion script that narrows the results based on current arg params
     group.add_argument ('-z',
                         '--completion',
@@ -203,7 +206,7 @@ def cli_parse():
     # get args and values as dict
     args = vars(parser.parse_args())
 
-    if (args['folder'] or args['collection'] or args['organization']) and args['secret'] is None:
+    if (args['folder'] or args['collection'] or args['organization']) and args['item'] is None:
         parser.error("need to pass 'I' if using '-f', '-c', and/or '-o'")
 
     gpghelp = gpgHelper()
@@ -213,10 +216,10 @@ def cli_parse():
         # parse conf file
         pass
 
-    if args['completions']:
+    if args['completion']:
         return
 
-    if args['new_session']:
+    if args['refresh']:
         bwsess.new_session()
         if args['no_clip']:
             print(bwsess.session)
@@ -233,7 +236,7 @@ def cli_parse():
         return
 
     if args['all_fields'] or args['password'] or args['totp']:
-        if args['secret'] is None:
+        if args['item'] is None:
             parser.error("need to pass 'S'")
 
     return args
