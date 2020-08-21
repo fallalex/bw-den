@@ -33,6 +33,20 @@ class bwCLI:
     def status(self, session):
         return self.call(['bw', 'status', '--raw', '--session', session])
 
+    def get(self, item_id):
+        return self.call(['bw', 'get', 'item', item_id])
+
+    def list(self, obj):
+        assert(obj in ('items', 'folders', 'collections', 'organizations'))
+        return self.call(['bw', 'list', obj])
+
+    # An item can be in one, none, or any of these: folder, organization, collection
+    # Items can only be in one folder, organization, and collection.
+    # A collection can only exist in an organization and only one.
+    # Item names can be shared even when sharing the same folder, organization, and colleciton.
+    # Item ids are the only way to uniquly identify an item.
+    # This makes getting items annoying...
+
 class gpgHelper:
     def __init__(self):
         self.fingerprint = 'C9CB0C945B583DD3E65DDC376B5C20C74C63902A'
@@ -126,59 +140,71 @@ class bwHelper:
 def cli_parse():
     parser = argparse.ArgumentParser(description='Simplified interface for copying Passwords and TOTPs from Bitwarden')
     group = parser.add_mutually_exclusive_group()
-    parser.add_argument('secret',
+    parser.add_argument('item',
                         nargs='?',
                         type=str,
-                        help='secret name',
-                        metavar='S')
+                        help='item name/id',
+                        metavar='I')
     parser.add_argument('-f',
                         '--folder',
                         type=str,
                         help='folder name',
                         metavar='F')
+    parser.add_argument('-o',
+                        '--organization',
+                        type=str,
+                        help='organization name',
+                        metavar='O')
     parser.add_argument('-c',
+                        '--collection',
+                        type=str,
+                        help='collection name',
+                        metavar='C')
+    parser.add_argument('-n',
                         '--no-clip',
                         action='store_true',
                         help='do not use clipboard')
     group.add_argument ('-a',
                         '--all-fields',
                         action='store_true',
-                        help='return all fields of [S]')
+                        help='return all fields of [I]')
     group.add_argument ('-p',
                         '--password',
                         action='store_true',
-                        help='return password of [S]')
-    group.add_argument ('-o',
+                        help='return password of [I]')
+    group.add_argument ('-t',
                         '--totp',
                         action='store_true',
-                        help='return totp of [S]')
+                        help='return totp of [I]')
     group.add_argument ('-s',
                         '--session',
                         action='store_true',
                         help='return session token')
-    group.add_argument ('-n',
+    group.add_argument ('-r',
                         '--new-session',
                         action='store_true',
                         help='lock and unlock bitwarden for new session')
+    #TODO: could try to do a fancy completion script that narrows the results based on current arg params
     group.add_argument ('-z',
-                        '--completions',
-                        action='store_true',
-                        help='list cached secret names for shell completion')
+                        '--completion',
+                        type=str,
+                        help="list cached 'item', 'folder', 'collection', or 'organization' names for shell completion",
+                        metavar='Z')
     parser.add_argument('-y',
                         '--yml-conf',
                         type=str,
                         help='path to yml conf file, default is {}'.format('test'))
 
+    # parser.print_help(sys.stderr)
+
     if not len(sys.argv) > 1:
-        parser.print_help(sys.stderr)
         parser.error("No arguments were passed")
 
     # get args and values as dict
     args = vars(parser.parse_args())
 
-    if args['folder'] and args['secret'] is None:
-        parser.print_help(sys.stderr)
-        parser.error("need to pass 'S' if using '-f'")
+    if (args['folder'] or args['collection'] or args['organization']) and args['secret'] is None:
+        parser.error("need to pass 'I' if using '-f', '-c', and/or '-o'")
 
     gpghelp = gpgHelper()
     bwsess = bwSession(gpghelp)
@@ -208,7 +234,6 @@ def cli_parse():
 
     if args['all_fields'] or args['password'] or args['totp']:
         if args['secret'] is None:
-            parser.print_help(sys.stderr)
             parser.error("need to pass 'S'")
 
     return args
