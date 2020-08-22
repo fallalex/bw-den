@@ -16,7 +16,11 @@ import pickle
 import yaml
 import pyotp
 
+# avoid multiple bwcli calls they are really slow
+# fine for new session, cache gen, sync
+
 class bwCLI:
+    #TODO: do more error handling here so only return stdout
     def __init__(self):
         self.bwsess = None
 
@@ -24,6 +28,7 @@ class bwCLI:
         bw_proc = Popen(args, shell=False, stdout=PIPE, stderr=PIPE)
         stdout, stderr = [s.decode('utf-8') for s in bw_proc.communicate()]
         return (bw_proc.returncode, stdout, stderr)
+        #TODO: check if unlocked unless unlock
 
     def unlock(self, passphrase):
         return self.call(['bw', 'unlock', passphrase, '--raw'])
@@ -38,7 +43,7 @@ class bwCLI:
         return self.call(['bw', 'sync', '--session', self.bwsess.session_token])
 
     def get(self, item_id):
-        return self.call(['bw', 'get', 'item', item_id, '--session', self.bwsess.session_token])
+        return self.call(['bw', 'get', 'item', item_id, '--raw', '--session', self.bwsess.session_token])
 
     def list(self, obj):
         return self.call(['bw', 'list', obj, '--session', self.bwsess.session_token])
@@ -143,13 +148,12 @@ class bwHelper:
         self.gpg = self.bwsess.gpg
         self.bwcli = self.bwsess.bwcli
         self.cache_obj_fields = {'id', 'name', 'folderId', 'organizationId', 'collectionIds', 'password', 'totp'}
+        self.cache_obj_fields_redact = {'password', 'totp'}
         self.cache_obj_types = {'items', 'folders', 'collections', 'organizations'}
         self.cache_dict = {}
         for obj_type in self.cache_obj_types:
             self.cache_dict[obj_type] = {}
         self.cache_path = Path.home() / '.bw-cache.asc'
-
-    #TODO: get specific item
 
     def refresh(self):
         self.bwsess.new_session()
@@ -175,6 +179,11 @@ class bwHelper:
                 for k in list(self.cache_dict[obj_type][obj_idx].keys()):
                     if k not in self.cache_obj_fields:
                         del self.cache_dict[obj_type][obj_idx][k]
+                        continue
+                    # redact creds to bool
+                    if k in self.cache_obj_fields_redact:
+                        self.cache_dict[obj_type][obj_idx][k] = bool(self.cache_dict[obj_type][obj_idx][k])
+                    #TODO: the password/totp are in the login dict need to pull them out
 
     def decrypt_cache(self):
         self.cache_dict = self.gpg.decrypt_file(self.cache_path)
@@ -185,7 +194,9 @@ class bwHelper:
         assert(self.cache_obj_types == set(self.cache_dict.keys()))
 
     def completion(self, obj_type):
-        assert(obj_type in self.cache_obj_types)
+        assert(obj_type in self.cache_obj_types | {'all'})
+        if obj_type == 'all':
+            return json.dumps(self.cache_dict)
         names = set()
         for obj in self.cache_dict[obj_type]:
             assert('name' in obj)
@@ -275,7 +286,8 @@ def cli_parse():
         return
 
     # Ensure there is a session before doing anything else
-    if not bwhelp.bwsess.unlocked():
+    bwhelp.bwsess.decrypt_session()
+    if not bwhelp.bwsess.session_token:
         sys.exit("Create a session before preceeding.")
 
     bwhelp.decrypt_cache()
@@ -295,6 +307,22 @@ def cli_parse():
     if args['all_fields'] or args['password'] or args['totp']:
         if args['item'] is None:
             parser.error("need to pass 'S'")
+
+    if args['all_fields']:
+        for i in bwhelp.cache_dict['items']:
+            if args['item'] == i['name']:
+                rc, out, err = bwhelp.bwcli.get(i['id'])
+                if rc == 0:
+                    print(out)
+
+    if args['password']:
+        for i in bwhelp.cache_dict['items']:
+            if args['item'] == i['name']:
+                if i['password']:
+                    rc, out, err = bwhelp.bwcli.get(i['id'])
+                    if rc == 0:
+                        print(json.loads(out)['password'])
+
 
     return args
 
