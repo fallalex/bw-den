@@ -1,0 +1,10 @@
+# Ignore everything
+*
+
+# Except ...
+!den
+!*.sh
+!*.py
+!*.md
+!_*-completion
+!.gitignore

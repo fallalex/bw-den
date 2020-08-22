@@ -1,5 +1,10 @@
 #compdef den
 
+# bitwarden-cli has completion
+# eval "$(bw completion --shell zsh); compdef _bw bw;"
+# TODO: completion for different object typs: item, folder, collection, organization
+# TODO: narrow the results based on current arg params
+
 function _den () {
     _values 'bitwarden secrets' $(den -z)
 }

@@ -11,13 +11,14 @@ import json
 import argparse
 import sys
 import pyperclip
+import pickle
 
 import yaml
 import pyotp
 
 class bwCLI:
     def __init__(self):
-        pass
+        self.bwsess = None
 
     def call(self, args):
         bw_proc = Popen(args, shell=False, stdout=PIPE, stderr=PIPE)
@@ -30,15 +31,17 @@ class bwCLI:
     def lock(self):
         return self.call(['bw', 'lock', '--raw'])
 
-    def status(self, session):
-        return self.call(['bw', 'status', '--raw', '--session', session])
+    def status(self):
+        return self.call(['bw', 'status', '--raw', '--session', self.bwsess.session_token])
+
+    def sync(self):
+        return self.call(['bw', 'sync', '--session', self.bwsess.session_token])
 
     def get(self, item_id):
-        return self.call(['bw', 'get', 'item', item_id])
+        return self.call(['bw', 'get', 'item', item_id, '--session', self.bwsess.session_token])
 
     def list(self, obj):
-        assert(obj in ('items', 'folders', 'collections', 'organizations'))
-        return self.call(['bw', 'list', obj])
+        return self.call(['bw', 'list', obj, '--session', self.bwsess.session_token])
 
     # An item can be in one, none, or any of these: folder, organization, collection
     # Items can only be in one folder, organization, and collection.
@@ -67,8 +70,8 @@ class gpgHelper:
     def decrypt_file(self, file_path):
         self.verify_asc_file(file_path)
         with open(file_path, 'rb') as f:
-            result = self.gpg.decrypt_file(f)
-        return str(result)
+            result = str(self.gpg.decrypt_file(f))
+        return result
 
     def encrypt_to_file(self, content, file_path):
         if not content:
@@ -90,11 +93,12 @@ class gpgHelper:
         assert('-----END PGP MESSAGE-----' in content)
 
 class bwSession:
-    def __init__(self, gpg_helper):
+    def __init__(self):
         self.bwcli = bwCLI()
-        self.gpg = gpg_helper
+        self.gpg = gpgHelper()
         self.encrypted_session = Path.home() / '.bw-session.asc'
-        self.session = ''
+        self.session_token = ''
+        self.bwcli.bwsess = self
 
     def new_session(self):
         rc, out, err = self.bwcli.lock()
@@ -104,19 +108,20 @@ class bwSession:
         while (rc != 0):
             passphrase = getpass()
             rc, out, err = self.bwcli.unlock(passphrase)
-        self.session = out
-        if not self.session_unlocked():
+        self.session_token = out
+        if not self.unlocked():
             sys.exit("Session failed to unlock")
-        self.gpg.encrypt_to_file(self.session, self.encrypted_session)
+        self.gpg.encrypt_to_file(self.session_token, self.encrypted_session)
 
     def decrypt_session(self):
-        self.session = self.gpg.decrypt_file(self.encrypted_session)
-        if not self.session:
-            # TODO: this error seems miss leading could be an empty file
-            sys.exit("failed to decrypt session try this command\n  gpg --decrypt '{}'".format(self.encrypted_session))
+        self.session_token = self.gpg.decrypt_file(self.encrypted_session)
+        if not self.session_token:
+            sys.exit("Failed to decrypt session or empty file. Try this command\n  gpg --decrypt '{}'".format(self.encrypted_session))
 
-    def session_unlocked(self):
-        rc, out, err = self.bwcli.status(self.session)
+    def unlocked(self):
+        if self.session_token == '':
+            self.decrypt_session()
+        rc, out, err = self.bwcli.status()
         if rc != 0:
             sys.exit("'status' command failed. returncode: '{}' | stdout: '{}' | stderr: '{}'".format(rc, out, err))
         lines = [l for l in out.splitlines() if l.strip()]
@@ -134,14 +139,58 @@ class bwSession:
 
 class bwHelper:
     def __init__(self):
-        pass
+        self.bwsess = bwSession()
+        self.gpg = self.bwsess.gpg
+        self.bwcli = self.bwsess.bwcli
+        self.cache_obj_fields = {'id', 'name', 'folderId', 'organizationId', 'collectionIds', 'password', 'totp'}
+        self.cache_obj_types = {'items', 'folders', 'collections', 'organizations'}
+        self.cache_dict = {}
+        for obj_type in self.cache_obj_types:
+            self.cache_dict[obj_type] = {}
+        self.cache_path = Path.home() / '.bw-cache.asc'
 
     #TODO: get specific item
-    #TODO: parse all items
-    #TODO: encrypt to cache
-    #TODO: decrypt cache
-    #TODO: -z command option
-    #TODO: sync bitwarden / refresh cache on new session
+
+    def refresh(self):
+        self.bwsess.new_session()
+        rc, out, err = self.bwcli.sync()
+        if rc != 0: sys.exit("Failed to sync.")
+        # self.bwsess.decrypt_session()
+        for obj in list(self.cache_dict.keys()):
+            rc, out, err = self.bwcli.list(obj)
+            if rc != 0: sys.exit("Failed to get list of '{}'.".format(obj))
+            try: self.cache_dict[obj] = json.loads(out)
+            except: sys.exit("Failed to parse json from '{}'.".format(obj))
+
+        # with open('cache.pickle', 'rb') as f:
+        #     self.cache_dict = pickle.load(f)
+
+        self.cache_redact()
+        self.gpg.encrypt_to_file(json.dumps(self.cache_dict), self.cache_path)
+
+    #TODO: hmm this does not seem ideal...
+    def cache_redact(self):
+        for obj_type in list(self.cache_dict.keys()):
+            for obj_idx in range(len(self.cache_dict[obj_type])):
+                for k in list(self.cache_dict[obj_type][obj_idx].keys()):
+                    if k not in self.cache_obj_fields:
+                        del self.cache_dict[obj_type][obj_idx][k]
+
+    def decrypt_cache(self):
+        self.cache_dict = self.gpg.decrypt_file(self.cache_path)
+        if not self.cache_dict:
+            sys.exit("Failed to decrypt cache or empty file. Try this command\n  gpg --decrypt '{}'".format(self.cache_path))
+        try: self.cache_dict = json.loads(self.cache_dict)
+        except: sys.exit("Failed to parse json from '{}'.".format(self.cache_path))
+        assert(self.cache_obj_types == set(self.cache_dict.keys()))
+
+    def completion(self, obj_type):
+        assert(obj_type in self.cache_obj_types)
+        names = set()
+        for obj in self.cache_dict[obj_type]:
+            assert('name' in obj)
+            names.add(obj['name'])
+        return '\n'.join(sorted(names))
 
 
 def cli_parse():
@@ -191,7 +240,6 @@ def cli_parse():
                         '--refresh',
                         action='store_true',
                         help='lock then unlock bitwarden, sync bitwarden, update cache')
-    #TODO: could try to do a fancy completion script that narrows the results based on current arg params
     group.add_argument ('-z',
                         '--completion',
                         type=str,
@@ -213,30 +261,35 @@ def cli_parse():
     if (args['folder'] or args['collection'] or args['organization']) and args['item'] is None:
         parser.error("need to pass 'I' if using '-f', '-c', and/or '-o'")
 
-    gpghelp = gpgHelper()
-    bwsess = bwSession(gpghelp)
+    bwhelp = bwHelper()
 
     if args['yml_conf']:
-        # parse conf file
         pass
 
-    if args['completion']:
+    if args['refresh']:
+        bwhelp.refresh()
+        if args['no_clip']:
+            print(bwhelp.bwsess.session_token)
+        else:
+            pyperclip.copy(bwhelp.bwsess.session_token)
         return
 
-    if args['refresh']:
-        bwsess.new_session()
-        if args['no_clip']:
-            print(bwsess.session)
-        else:
-            pyperclip.copy(bwsess.session)
+    # Ensure there is a session before doing anything else
+    if not bwhelp.bwsess.unlocked():
+        sys.exit("Create a session before preceeding.")
+
+    bwhelp.decrypt_cache()
+
+    if args['completion']:
+        print(bwhelp.completion(args['completion']))
         return
 
     if args['session']:
-        bwsess.decrypt_session()
+        bwhelp.bwsess.decrypt_session()
         if args['no_clip']:
-            print(bwsess.session)
+            print(bwhelp.bwsess.session_token)
         else:
-            pyperclip.copy(bwsess.session)
+            pyperclip.copy(bwhelp.bwsess.session_token)
         return
 
     if args['all_fields'] or args['password'] or args['totp']:
