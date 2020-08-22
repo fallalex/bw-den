@@ -28,7 +28,7 @@ class bwCLI:
         bw_proc = Popen(args, shell=False, stdout=PIPE, stderr=PIPE)
         stdout, stderr = [s.decode('utf-8') for s in bw_proc.communicate()]
         return (bw_proc.returncode, stdout, stderr)
-        #TODO: check if unlocked unless unlock
+        #TODO: check if unlocked unless trying to unlock
 
     def unlock(self, passphrase):
         return self.call(['bw', 'unlock', passphrase, '--raw'])

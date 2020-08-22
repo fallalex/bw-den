@@ -2,11 +2,44 @@
 
 # bitwarden-cli has completion
 # eval "$(bw completion --shell zsh); compdef _bw bw;"
-# TODO: completion for different object typs: item, folder, collection, organization
 # TODO: narrow the results based on current arg params
 
 function _den () {
-    _values 'bitwarden secrets' $(den -z)
+    local state
+
+    _arguments \
+        '-f: :->folders' \
+        '-c: :->collections' \
+        '-o: :->organizations' \
+        '*: :->items'
+
+    case $state in 
+        # needed to use compadd to work with spaced items
+        folders)
+            IFS=$'\n'
+            for f in $(den -z folders); do
+                compadd -x 'Completing bitwarden folders' -J 'folders' $f
+            done
+            ;;
+        collections)
+            IFS=$'\n'
+            for c in $(den -z collections); do
+                compadd -x 'Completing bitwarden collections' -J 'collections' $c
+            done
+            ;;
+        organizations)
+            IFS=$'\n'
+            for o in $(den -z organizations); do
+                compadd -x 'Completing bitwarden organizations' -J 'organizations' $o
+            done
+            ;;
+        items)
+            IFS=$'\n'
+            for i in $(den -z items); do
+                compadd -x 'Completing bitwarden items' -J 'items' $i
+            done
+            ;;
+    esac
 }
 
 _den
