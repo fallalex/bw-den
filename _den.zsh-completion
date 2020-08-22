@@ -3,6 +3,7 @@
 # bitwarden-cli has completion
 # eval "$(bw completion --shell zsh); compdef _bw bw;"
 # TODO: narrow the results based on current arg params
+# https://stackoverflow.com/questions/46311615/zsh-completion-based-on-previous-flag
 
 function _den () {
     local state

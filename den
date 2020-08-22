@@ -48,12 +48,6 @@ class bwCLI:
     def list(self, obj):
         return self.call(['bw', 'list', obj, '--session', self.bwsess.session_token])
 
-    # An item can be in one, none, or any of these: folder, organization, collection
-    # Items can only be in one folder, organization, and collection.
-    # A collection can only exist in an organization and only one.
-    # Item names can be shared even when sharing the same folder, organization, and colleciton.
-    # Item ids are the only way to uniquly identify an item.
-    # This makes getting items annoying...
 
 class gpgHelper:
     def __init__(self):
@@ -147,8 +141,8 @@ class bwHelper:
         self.bwsess = bwSession()
         self.gpg = self.bwsess.gpg
         self.bwcli = self.bwsess.bwcli
-        self.cache_obj_fields = {'id', 'name', 'folderId', 'organizationId', 'collectionIds', 'password', 'totp'}
-        self.cache_obj_fields_redact = {'password', 'totp'}
+        self.cache_obj_fields = {'id', 'name', 'folderId', 'organizationId', 'collectionIds', 'password', 'totp', 'login'}
+        self.cache_obj_fields_redact = {'password', 'totp','login'}
         self.cache_obj_types = {'items', 'folders', 'collections', 'organizations'}
         self.cache_dict = {}
         for obj_type in self.cache_obj_types:
@@ -156,20 +150,24 @@ class bwHelper:
         self.cache_path = Path.home() / '.bw-cache.asc'
 
     def refresh(self):
-        self.bwsess.new_session()
-        rc, out, err = self.bwcli.sync()
-        if rc != 0: sys.exit("Failed to sync.")
-        # self.bwsess.decrypt_session()
-        for obj in list(self.cache_dict.keys()):
-            rc, out, err = self.bwcli.list(obj)
-            if rc != 0: sys.exit("Failed to get list of '{}'.".format(obj))
-            try: self.cache_dict[obj] = json.loads(out)
-            except: sys.exit("Failed to parse json from '{}'.".format(obj))
+        # self.bwsess.new_session()
+        self.bwsess.decrypt_session()
+        # rc, out, err = self.bwcli.sync()
+        # if rc != 0: sys.exit("Failed to sync.")
+        # for obj in list(self.cache_dict.keys()):
+        #     rc, out, err = self.bwcli.list(obj)
+        #     if rc != 0: sys.exit("Failed to get list of '{}'.".format(obj))
+        #     try: self.cache_dict[obj] = json.loads(out)
+        #     except: sys.exit("Failed to parse json from '{}'.".format(obj))
 
-        # with open('cache.pickle', 'rb') as f:
-        #     self.cache_dict = pickle.load(f)
+        with open('cache.pickle.bak', 'rb') as f:
+            self.cache_dict = pickle.load(f)
 
         self.cache_redact()
+
+        with open('cache.pickle', 'wb') as f:
+            self.cache_dict = pickle.dump(self.cache_dict, f)
+
         self.gpg.encrypt_to_file(json.dumps(self.cache_dict), self.cache_path)
 
     #TODO: hmm this does not seem ideal...
@@ -182,8 +180,12 @@ class bwHelper:
                         continue
                     # redact creds to bool
                     if k in self.cache_obj_fields_redact:
-                        self.cache_dict[obj_type][obj_idx][k] = bool(self.cache_dict[obj_type][obj_idx][k])
-                    #TODO: the password/totp are in the login dict need to pull them out
+                        if k == 'login':
+                            self.cache_dict[obj_type][obj_idx]['password'] = bool(self.cache_dict[obj_type][obj_idx][k]['password'])
+                            self.cache_dict[obj_type][obj_idx]['totp'] = bool(self.cache_dict[obj_type][obj_idx][k]['totp'])
+                            del self.cache_dict[obj_type][obj_idx][k]
+                        else:
+                            self.cache_dict[obj_type][obj_idx][k] = bool(self.cache_dict[obj_type][obj_idx][k])
 
     def decrypt_cache(self):
         self.cache_dict = self.gpg.decrypt_file(self.cache_path)
