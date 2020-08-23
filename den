@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 
-# bw unlock --raw
-# pip3 install python-gnupg
-
 import gnupg
 from pathlib import Path
 from getpass import getpass
@@ -12,117 +9,31 @@ import argparse
 import sys
 import pyperclip
 import pickle
-
 import yaml
 import pyotp
-
-# avoid multiple bwcli calls they are really slow
-# fine for new session, cache gen, sync
+import os
+import time
+import tempfile
 
 class bwCLI:
-    #TODO: do more error handling here so only return stdout
     def __init__(self):
         self.bwsess = None
 
-    def call(self, args):
-        bw_proc = Popen(args, shell=False, stdout=PIPE, stderr=PIPE)
-        stdout, stderr = [s.decode('utf-8') for s in bw_proc.communicate()]
-        return (bw_proc.returncode, stdout, stderr)
-        #TODO: check if unlocked unless trying to unlock
-
-    def unlock(self, passphrase):
-        return self.call(['bw', 'unlock', passphrase, '--raw'])
-
-    def lock(self):
-        return self.call(['bw', 'lock', '--raw'])
-
-    def status(self):
-        return self.call(['bw', 'status', '--raw', '--session', self.bwsess.session_token])
-
-    def sync(self):
-        return self.call(['bw', 'sync', '--session', self.bwsess.session_token])
-
-    def get(self, item_id):
-        return self.call(['bw', 'get', 'item', item_id, '--raw', '--session', self.bwsess.session_token])
-
-    def list(self, obj):
-        return self.call(['bw', 'list', obj, '--session', self.bwsess.session_token])
-
-
-class gpgHelper:
-    def __init__(self):
-        # stat.filemode(0o100600) -> '-rw-------'
-        self.perms = 0o100600
-        self.fingerprint = 'C9CB0C945B583DD3E65DDC376B5C20C74C63902A'
-        self.gpg_home = Path.home() / '.gnupg'
-        self.gpg = gnupg.GPG(gnupghome=str(self.gpg_home), use_agent=True)
-
-        keys_pub = self.gpg.list_keys().key_map
-        key = keys_pub.get(self.fingerprint)
-        if not key:
-            sys.exit("Could not find fingerprint in public keyring: '{}'".format(self.fingerprint))
-        keys_priv = self.gpg.list_keys().key_map
-        key = keys_priv.get(self.fingerprint)
-        if not key:
-            sys.exit("Could not find fingerprint in secrets keyring: '{}'".format(self.fingerprint))
-
-    def decrypt_file(self, file_path):
-        self.verify_asc_file(file_path)
-        with open(file_path, 'rb') as f:
-            result = str(self.gpg.decrypt_file(f))
-        return result
-
-    def encrypt_to_file(self, content, file_path):
-        if not content:
-            sys.exit("Nothing was given to encrypt to '{}'".format(file_path))
-        self.gpg.encrypt(content, self.fingerprint, output=file_path)
-        file_path.chmod(self.perms)
-        self.verify_asc_file(file_path)
-
-    def verify_asc_file(self, file_path):
-        assert(file_path.suffix == '.asc')
-        if not file_path.is_file():
-            sys.exit("No encrypted file at: '{}'".format(file_path))
-        assert(file_path.stat().st_size > 0)
-        assert(file_path.stat().st_mode == self.perms)
-        with open(file_path, 'r') as f:
-            content = f.read()
-        content = content.strip().splitlines()
-        assert('-----BEGIN PGP MESSAGE-----' in content)
-        assert('-----END PGP MESSAGE-----' in content)
-
-class bwSession:
-    def __init__(self):
-        self.bwcli = bwCLI()
-        self.gpg = gpgHelper()
-        self.encrypted_session = Path.home() / '.bw-session.asc'
-        self.session_token = ''
-        self.bwcli.bwsess = self
-
-    def new_session(self):
-        rc, out, err = self.bwcli.lock()
-        if rc != 0:
-            sys.exit("Failed to lock bitwarden: {} {}".format(out, err))
-        rc = 1
-        while (rc != 0):
-            passphrase = getpass()
-            rc, out, err = self.bwcli.unlock(passphrase)
-        self.session_token = out
-        if not self.unlocked():
-            sys.exit("Session failed to unlock")
-        self.gpg.encrypt_to_file(self.session_token, self.encrypted_session)
-
-    def decrypt_session(self):
-        self.session_token = self.gpg.decrypt_file(self.encrypted_session)
-        if not self.session_token:
-            sys.exit("Failed to decrypt session or empty file. Try this command\n  gpg --decrypt '{}'".format(self.encrypted_session))
+    def error(self, subcmd, rc, out, err, session):
+        # if a session is required for the failed command check the session
+        if session:
+            if not self.unlocked():
+                print("Run 'den -r' there are no valid sessions.")
+                os._exit(1)
+        print("The command 'bw {}' exited with code '{}'".format(subcmd, rc))
+        print("---- stdout ----\n{}\n---- stderr ----\n{}\n".format(out, err))
+        os._exit(1)
 
     def unlocked(self):
-        if self.session_token == '':
-            self.decrypt_session()
-        rc, out, err = self.bwcli.status()
+        rc, out, err = self._call(['status', '--raw'], True)
         if rc != 0:
-            sys.exit("'status' command failed. returncode: '{}' | stdout: '{}' | stderr: '{}'".format(rc, out, err))
+            # set session to false to avoid loop
+            self.error('status', rc, out, err, False)
         lines = [l for l in out.splitlines() if l.strip()]
         json_lines = []
         for line in lines:
@@ -136,50 +47,189 @@ class bwSession:
             return True
         return False
 
-class bwHelper:
+    def call(self, args, session=True):
+        rc, out, err = self._call(args, session)
+        if rc != 0:
+            self.error(args[0], rc, out, err, session)
+        else:
+            return out
+
+    def _call(self, args, session):
+        print(args,session)
+        # if session is need and not set try to get session
+        if session and self.bwsess.session_token == '':
+            self.bwsess.decrypt_session()
+        cmd = ['bw']
+        cmd.extend(args)
+        if session:
+            cmd.extend(['--session', self.bwsess.session_token])
+        # The auto password prompt cant be disabled :(
+        # was wanting to use a in memory file but gave up
+        # https://stackoverflow.com/questions/18421757/live-output-from-subprocess-command
+        # https://docs.pyfilesystem.org/en/latest/reference/memoryfs.html
+        # neiter work need fileno() for the object
+        with tempfile.NamedTemporaryFile() as tmp:
+            writer = open(tmp.name, 'wb')
+            reader = open(tmp.name, 'rb')
+            bw_proc = Popen(cmd, shell=False, stdin=PIPE, stdout=PIPE, stderr=writer)
+            while bw_proc.poll() is None:
+                time.sleep(0.1)
+                err = reader.read().decode('utf-8')
+                if '? Master password:' in err:
+                    bw_proc.stdin.write(b'\n')
+                    try: bw_proc.stdin.flush()
+                    except BrokenPipeError as e:
+                        pass
+        out = bw_proc.stdout.read().decode('utf-8')
+        return (bw_proc.returncode, out, err)
+
+    def unlock(self, passphrase):
+        return self._call(['unlock', passphrase, '--raw'], False)
+
+    def lock(self):
+        return self.call(['lock'], False)
+
+    def sync(self):
+        return self.call(['sync'])
+
+    def get(self, item_id):
+        return self.call(['get', 'item', item_id, '--raw'])
+
+    def list(self, obj):
+        return self.call(['list', obj])
+
+
+class gpgHelper:
+    def __init__(self, config):
+        self.config = config
+        self.gpg = gnupg.GPG(gnupghome=str(self.config.gpg_home), use_agent=True)
+
+        keys_pub = self.gpg.list_keys().key_map
+        key = keys_pub.get(self.config.fingerprint)
+        if not key:
+            sys.exit("Could not find fingerprint in public keyring: '{}'".format(self.config.fingerprint))
+        keys_priv = self.gpg.list_keys().key_map
+        key = keys_priv.get(self.config.fingerprint)
+        if not key:
+            sys.exit("Could not find fingerprint in secrets keyring: '{}'".format(self.config.fingerprint))
+
+    def decrypt_file(self, file_path):
+        self.verify_asc_file(file_path)
+        with open(file_path, 'rb') as f:
+            result = str(self.gpg.decrypt_file(f))
+        return result
+
+    def encrypt_to_file(self, content, file_path):
+        if not content:
+            sys.exit("Nothing was given to encrypt to '{}'".format(file_path))
+        self.gpg.encrypt(content, self.config.fingerprint, output=file_path)
+        file_path.chmod(self.config.perms)
+        self.verify_asc_file(file_path)
+
+    def verify_asc_file(self, file_path):
+        assert(file_path.suffix == '.asc')
+        if not file_path.is_file():
+            sys.exit("No encrypted file at: '{}'".format(file_path))
+        assert(file_path.stat().st_size > 0)
+        assert(file_path.stat().st_mode == self.config.perms)
+        with open(file_path, 'r') as f:
+            content = f.read()
+        content = content.strip().splitlines()
+        assert('-----BEGIN PGP MESSAGE-----' in content)
+        assert('-----END PGP MESSAGE-----' in content)
+
+class denConf:
     def __init__(self):
-        self.bwsess = bwSession()
-        self.gpg = self.bwsess.gpg
-        self.bwcli = self.bwsess.bwcli
+        self.encrypted_session = Path.home() / '.bw-session.asc'
+        # stat.filemode(0o100600) -> '-rw-------'
+        self.perms = 0o100600
+        self.fingerprint = 'C9CB0C945B583DD3E65DDC376B5C20C74C63902A'
+        self.gpg_home = Path.home() / '.gnupg'
+
         self.cache_obj_fields = {'id', 'name', 'folderId', 'organizationId', 'collectionIds', 'password', 'totp', 'login'}
         self.cache_obj_fields_redact = {'password', 'totp','login'}
         self.cache_obj_types = {'items', 'folders', 'collections', 'organizations'}
-        self.cache_dict = {}
-        for obj_type in self.cache_obj_types:
-            self.cache_dict[obj_type] = {}
+
         self.cache_path = Path.home() / '.bw-cache.asc'
 
+        # The pickle helps speedup dev around the cache
+        self.pickle_path = Path('cache.pickle')
+        self.redacted_pickle_path = Path('redacted-cache.pickle')
+        self.pickle = False
+        # self.pickle = True
+
+class bwSession:
+    def __init__(self, config):
+        self.config = config
+        self.bwcli = bwCLI()
+        self.gpg = gpgHelper(self.config)
+        self.session_token = ''
+        self.bwcli.bwsess = self
+
+    def new_session(self):
+        self.bwcli.lock()
+        rc = 1
+        while (rc != 0):
+            passphrase = getpass()
+            rc, out, err = self.bwcli.unlock(passphrase)
+        self.session_token = out
+        if not self.bwcli.unlocked():
+            sys.exit("Session failed to unlock")
+        self.gpg.encrypt_to_file(self.session_token, self.config.encrypted_session)
+
+    def decrypt_session(self):
+        self.session_token = self.gpg.decrypt_file(self.config.encrypted_session)
+        if not self.session_token:
+            sys.exit("Failed to decrypt session or empty file. Try this command\n  gpg --decrypt '{}'".format(self.config.encrypted_session))
+
+
+class bwHelper:
+    def __init__(self):
+        self.config = denConf()
+        self.bwsess = bwSession(self.config)
+        self.gpg = self.bwsess.gpg
+        self.bwcli = self.bwsess.bwcli
+        self.cache_dict = {}
+        for obj_type in self.config.cache_obj_types:
+            self.cache_dict[obj_type] = {}
+
     def refresh(self):
-        # self.bwsess.new_session()
-        self.bwsess.decrypt_session()
-        # rc, out, err = self.bwcli.sync()
-        # if rc != 0: sys.exit("Failed to sync.")
-        # for obj in list(self.cache_dict.keys()):
-        #     rc, out, err = self.bwcli.list(obj)
-        #     if rc != 0: sys.exit("Failed to get list of '{}'.".format(obj))
-        #     try: self.cache_dict[obj] = json.loads(out)
-        #     except: sys.exit("Failed to parse json from '{}'.".format(obj))
-
-        with open('cache.pickle.bak', 'rb') as f:
-            self.cache_dict = pickle.load(f)
-
+        if self.config.pickle and self.config.pickle_path.is_file():
+            self.bwsess.decrypt_session()
+            with open(self.config.pickle_path, 'rb') as f:
+                self.cache_dict = pickle.load(f)
+        else:
+            self.bwsess.new_session()
+            out = self.bwcli.sync()
+            for obj in list(self.cache_dict.keys()):
+                out = self.bwcli.list(obj)
+                try: self.cache_dict[obj] = json.loads(out)
+                except: sys.exit("Failed to parse json from '{}'.".format(obj))
+            if self.config.pickle:
+                with open(self.config.pickle_path, 'wb') as f:
+                    pickle.dump(self.cache_dict, f)
+            else:
+                if self.config.pickle_path.is_file():
+                    self.config.pickle_path.unlink()
         self.cache_redact()
-
-        with open('cache.pickle', 'wb') as f:
-            self.cache_dict = pickle.dump(self.cache_dict, f)
-
-        self.gpg.encrypt_to_file(json.dumps(self.cache_dict), self.cache_path)
+        if self.config.pickle:
+            with open(self.config.redacted_pickle_path, 'wb') as f:
+                pickle.dump(self.cache_dict, f)
+        else:
+            if self.config.redacted_pickle_path.is_file():
+                self.config.redacted_pickle_path.unlink()
+        self.gpg.encrypt_to_file(json.dumps(self.cache_dict), self.config.cache_path)
 
     #TODO: hmm this does not seem ideal...
     def cache_redact(self):
         for obj_type in list(self.cache_dict.keys()):
             for obj_idx in range(len(self.cache_dict[obj_type])):
                 for k in list(self.cache_dict[obj_type][obj_idx].keys()):
-                    if k not in self.cache_obj_fields:
+                    if k not in self.config.cache_obj_fields:
                         del self.cache_dict[obj_type][obj_idx][k]
                         continue
                     # redact creds to bool
-                    if k in self.cache_obj_fields_redact:
+                    if k in self.config.cache_obj_fields_redact:
                         if k == 'login':
                             self.cache_dict[obj_type][obj_idx]['password'] = bool(self.cache_dict[obj_type][obj_idx][k]['password'])
                             self.cache_dict[obj_type][obj_idx]['totp'] = bool(self.cache_dict[obj_type][obj_idx][k]['totp'])
@@ -188,15 +238,15 @@ class bwHelper:
                             self.cache_dict[obj_type][obj_idx][k] = bool(self.cache_dict[obj_type][obj_idx][k])
 
     def decrypt_cache(self):
-        self.cache_dict = self.gpg.decrypt_file(self.cache_path)
+        self.cache_dict = self.gpg.decrypt_file(self.config.cache_path)
         if not self.cache_dict:
-            sys.exit("Failed to decrypt cache or empty file. Try this command\n  gpg --decrypt '{}'".format(self.cache_path))
+            sys.exit("Failed to decrypt cache or empty file. Try this command\n  gpg --decrypt '{}'".format(self.config.cache_path))
         try: self.cache_dict = json.loads(self.cache_dict)
-        except: sys.exit("Failed to parse json from '{}'.".format(self.cache_path))
-        assert(self.cache_obj_types == set(self.cache_dict.keys()))
+        except: sys.exit("Failed to parse json from '{}'.".format(self.config.cache_path))
+        assert(self.config.cache_obj_types == set(self.cache_dict.keys()))
 
     def completion(self, obj_type):
-        assert(obj_type in self.cache_obj_types | {'all'})
+        assert(obj_type in self.config.cache_obj_types | {'all'})
         if obj_type == 'all':
             return json.dumps(self.cache_dict)
         names = set()
@@ -313,17 +363,15 @@ def cli_parse():
     if args['all_fields']:
         for i in bwhelp.cache_dict['items']:
             if args['item'] == i['name']:
-                rc, out, err = bwhelp.bwcli.get(i['id'])
-                if rc == 0:
-                    print(out)
+                out = bwhelp.bwcli.get(i['id'])
+                print(out)
 
     if args['password']:
         for i in bwhelp.cache_dict['items']:
             if args['item'] == i['name']:
                 if i['password']:
-                    rc, out, err = bwhelp.bwcli.get(i['id'])
-                    if rc == 0:
-                        print(json.loads(out)['password'])
+                    out = bwhelp.bwcli.get(i['id'])
+                    print(json.loads(out)['login']['password'])
 
 
     return args
