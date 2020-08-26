@@ -1,10 +1,11 @@
-# Ignore root
 /*
-
-!/den/
-!/docs/
-!/tests/
-!/README.md
-!/requirements.txt
-!/_*-completion
 !/.gitignore
+!/den/
+!/tests/
+!/docs/
+!/README.md
+!/LICENSE
+!/requirements.txt
+!/setup.py
+!/_*-completion
+
