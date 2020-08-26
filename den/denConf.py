@@ -1,3 +1,9 @@
+from pathlib import Path
+import json
+import yaml
+import sys
+import os
+
 class denConf:
     def __init__(self):
         self.encrypted_session = Path.home() / '.bw-session.asc'

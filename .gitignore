@@ -1,4 +1,7 @@
+# Default to deny all under root
 /*
+
+# Allowlist 
 !/.gitignore
 !/den/
 !/tests/
@@ -8,4 +11,9 @@
 !/requirements.txt
 !/setup.py
 !/_*-completion
+
+# Explicit deny for contents of allowed sub-directories
+__pycache__/
+*.py[cod]
+*$py.class
 
