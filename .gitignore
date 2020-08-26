@@ -4,6 +4,7 @@
 # Allowlist 
 !/.gitignore
 !/den/
+!/bin/
 !/tests/
 !/docs/
 !/README.md

@@ -6,8 +6,6 @@ import tempfile
 
 class bwCLI:
     def __init__(self, bwsess):
-        # av
-        # from bwSession.py import bwSession
         self.bwsess = bwsess
 
     def error(self, subcmd, rc, out, err, session):
