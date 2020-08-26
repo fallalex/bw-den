@@ -1,0 +1,5 @@
+pyotp==2.3.0
+pyperclip==1.8.0
+python-gnupg==0.4.6
+PyYAML==5.3.1
+

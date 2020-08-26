@@ -1,0 +1,3 @@
+would like to get zsh completion to 
+- print available completions and navigate them
+- not default to first unless completeing files

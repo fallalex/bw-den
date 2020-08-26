@@ -1,10 +1,10 @@
-# Ignore everything
-*
+# Ignore root
+/*
 
-# Except ...
-!den
-!*.sh
-!*.py
-!*.md
-!_*-completion
-!.gitignore
+!/den/
+!/docs/
+!/tests/
+!/README.md
+!/requirements.txt
+!/_*-completion
+!/.gitignore
