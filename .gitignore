@@ -3,7 +3,7 @@
 
 # Allowlist 
 !/.gitignore
-!/den/
+!/src/
 !/bin/
 !/tests/
 !/docs/
