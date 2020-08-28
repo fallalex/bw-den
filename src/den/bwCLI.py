@@ -1,5 +1,6 @@
 from subprocess import Popen, PIPE
 import json
+import copy
 import os
 import time
 import tempfile
@@ -7,6 +8,7 @@ import tempfile
 class bwCLI:
     def __init__(self, bwsess):
         self.bwsess = bwsess
+        self.debug = False
 
     def error(self, subcmd, rc, out, err, session):
         # if a session is required for the failed command check the session
@@ -43,8 +45,15 @@ class bwCLI:
         else:
             return out
 
+    def debug_call(self, args, session):
+        if self.debug:
+            arg_copy = copy.deepcopy(args)
+            if args[0] == 'unlock':
+                arg_copy[1] = 'PASSPHRASE_REDACTED'
+            print("Command Arguments: {}\nUses Session:      {}".format(arg_copy, session))
+
     def _call(self, args, session):
-        print(args,session)
+        self.debug_call(args, session)
         # if session is need and not set try to get session
         if session and self.bwsess.session_token == '':
             self.bwsess.decrypt_session()
@@ -82,7 +91,12 @@ class bwCLI:
         return self.call(['sync'])
 
     def get(self, item_id):
-        return self.call(['get', 'item', item_id, '--raw'])
+        out = self.call(['get', 'item', item_id, '--raw'])
+        try:
+            return json.loads(out)
+        except:
+            print("Get for id '{}' did not return valid json.".format(item_id))
+            os._exit(1)
 
     def list(self, obj):
         return self.call(['list', obj])

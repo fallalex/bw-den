@@ -1,8 +1,18 @@
 import json
 import sys
 import pickle
+import pyotp
+import os
 from .denConf import denConf
 from .bwSession import bwSession
+
+def _finditem(obj, key):
+    if key in obj: return (True, obj[key])
+    for k, v in obj.items():
+        if isinstance(v, dict):
+            exists, value = _finditem(v, key)
+            if exists: return (exists, value)
+    return (False, None)
 
 class bwHelper:
     def __init__(self):
@@ -75,4 +85,30 @@ class bwHelper:
             assert('name' in obj)
             names.add(obj['name'])
         return '\n'.join(sorted(names))
+
+    def get_pass(self, id):
+        return self.get_item(id, 'password')
+
+    def get_totp(self, id):
+        token = self.get_item(id, 'totp')
+        if token:
+            return pyotp.TOTP(token).now()
+        print("No TOTP")
+        os._exit(1)
+
+    def get_item(self, id, field=None):
+        item = self.bwcli.get(id)
+        if field:
+            exists, value = _finditem(item, field)
+            if not exists:
+                print("The field '{}' is not in id '{}'.".format(field, id))
+                os._exit(1)
+            return value
+        return item
+
+    def item_id(self, name):
+        for i in self.cache_dict['items']:
+            # This only finds the first match ignores any others
+            if name == i['name']:
+                return i['id']
 

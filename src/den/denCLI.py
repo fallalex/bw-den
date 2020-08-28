@@ -1,32 +1,35 @@
 import json
+import pyperclip
 import argparse
 from .bwHelper import *
 
 class denCLI:
     def __init__(self, argv):
-        parser = argparse.ArgumentParser(description='Simplified interface for copying Passwords and TOTPs from Bitwarden')
-        group = parser.add_mutually_exclusive_group()
-        parser.add_argument('item',
+        self.argv = argv
+        self.bwhelp = bwHelper()
+        self.parser = argparse.ArgumentParser(description='Simplified interface for copying Passwords and TOTPs from Bitwarden')
+        group = self.parser.add_mutually_exclusive_group()
+        self.parser.add_argument('item',
                             nargs='?',
                             type=str,
                             help='item name/id',
                             metavar='I')
-        parser.add_argument('-f',
+        self.parser.add_argument('-f',
                             '--folder',
                             type=str,
                             help='folder name',
                             metavar='F')
-        parser.add_argument('-o',
+        self.parser.add_argument('-o',
                             '--organization',
                             type=str,
                             help='organization name',
                             metavar='O')
-        parser.add_argument('-c',
+        self.parser.add_argument('-c',
                             '--collection',
                             type=str,
                             help='collection name',
                             metavar='C')
-        parser.add_argument('-n',
+        self.parser.add_argument('-n',
                             '--no-clip',
                             action='store_true',
                             help='do not use clipboard')
@@ -55,68 +58,89 @@ class denCLI:
                             type=str,
                             help="list cached 'item', 'folder', 'collection', or 'organization' names for shell completion",
                             metavar='Z')
-        parser.add_argument('-y',
+        self.parser.add_argument('-y',
                             '--yml-conf',
                             type=str,
                             help='path to yml conf file, default is {}'.format('test'))
+        self.arg_parse()
+        self.actions()
 
-        # parser.print_help(sys.stderr)
-
-        if not len(argv) > 1:
-            parser.error("No arguments were passed")
+    def arg_parse(self):
+        if not len(self.argv) > 1:
+            self.parser.error("No arguments were passed")
 
         # get args and values as dict
-        args = vars(parser.parse_args(argv[1:]))
+        self.args = vars(self.parser.parse_args(self.argv[1:]))
 
-        if (args['folder'] or args['collection'] or args['organization']) and args['item'] is None:
-            parser.error("need to pass 'I' if using '-f', '-c', and/or '-o'")
+        if (self.args['folder'] or self.args['collection'] or self.args['organization']) and self.args['item'] is None:
+            self.parser.error("need to pass 'I' if using '-f', '-c', and/or '-o'")
 
-        bwhelp = bwHelper()
+    def copy_or_print(self, output, desc=None, noclip=None):
+        if noclip is None:
+            noclip = self.args['no_clip']
+        if noclip:
+            if desc:
+                print("{}: ".format(desc), end='')
+            print(output)
+        else:
+            pyperclip.copy(output)
+            print("Copied", end='')
+            if desc:
+                print(" {}".format(desc))
+            else:
+                print()
 
-        if args['yml_conf']:
+    def actions(self):
+        if self.args['yml_conf']:
             pass
 
-        if args['refresh']:
-            bwhelp.refresh()
-            if args['no_clip']:
-                print(bwhelp.bwsess.session_token)
+        if self.args['refresh']:
+            self.bwhelp.refresh()
+            if self.args['no_clip']:
+                print(self.bwhelp.bwsess.session_token)
             else:
-                pyperclip.copy(bwhelp.bwsess.session_token)
+                pyperclip.copy(self.bwhelp.bwsess.session_token)
             return
 
         # Ensure there is a session before doing anything else
-        bwhelp.bwsess.decrypt_session()
-        if not bwhelp.bwsess.session_token:
+        self.bwhelp.bwsess.decrypt_session()
+        if not self.bwhelp.bwsess.session_token:
             sys.exit("Create a session before preceeding.")
 
-        bwhelp.decrypt_cache()
+        self.bwhelp.decrypt_cache()
 
-        if args['completion']:
-            print(bwhelp.completion(args['completion']))
+        if self.args['completion']:
+            print(self.bwhelp.completion(self.args['completion']))
             return
 
-        if args['session']:
-            bwhelp.bwsess.decrypt_session()
-            if args['no_clip']:
-                print(bwhelp.bwsess.session_token)
+        if self.args['session']:
+            self.bwhelp.bwsess.decrypt_session()
+            if self.args['no_clip']:
+                print(self.bwhelp.bwsess.session_token)
             else:
-                pyperclip.copy(bwhelp.bwsess.session_token)
+                pyperclip.copy(self.bwhelp.bwsess.session_token)
             return
 
-        if args['all_fields'] or args['password'] or args['totp']:
-            if args['item'] is None:
-                parser.error("need to pass 'S'")
+        if self.args['all_fields'] or self.args['password'] or self.args['totp']:
+            if self.args['item'] is None:
+                self.parser.error("need to pass 'S'")
 
-        if args['all_fields']:
-            for i in bwhelp.cache_dict['items']:
-                if args['item'] == i['name']:
-                    out = bwhelp.bwcli.get(i['id'])
-                    print(out)
+            item_id = self.bwhelp.item_id(self.args['item'])
+            if self.args['all_fields']:
+                self.copy_or_print(self.bwhelp.get_item(item_id),True)
+            elif self.args['password']:
+                self.copy_or_print(self.bwhelp.get_pass(item_id))
+            elif self.args['totp']:
+                self.copy_or_print(self.bwhelp.get_totp(item_id))
+            return
 
-        if args['password']:
-            for i in bwhelp.cache_dict['items']:
-                if args['item'] == i['name']:
-                    if i['password']:
-                        out = bwhelp.bwcli.get(i['id'])
-                        print(json.loads(out)['login']['password'])
+        if self.args['item']:
+            item_id = self.bwhelp.item_id(self.args['item'])
+            self.copy_or_print(self.bwhelp.get_pass(item_id),'Password')
+            # TODO: check that totp exists will need to refactor cache structure
+            # TODO: timeout on input
+            if not self.args['no_clip']:
+                input("Enter for TOTP...")
+            self.copy_or_print(self.bwhelp.get_totp(item_id),'TOTP')
+
 
