@@ -125,7 +125,10 @@ class denCLI:
             if self.args['item'] is None:
                 self.parser.error("need to pass 'S'")
 
-            item_id = self.bwhelp.item_id(self.args['item'])
+            item_id = self.bwhelp.item_id(self.args['item'], \
+                                          self.args['folder'], \
+                                          self.args['collection'], \
+                                          self.args['organization'])
             if self.args['all_fields']:
                 self.copy_or_print(self.bwhelp.get_item(item_id),True)
             elif self.args['password']:
@@ -135,7 +138,10 @@ class denCLI:
             return
 
         if self.args['item']:
-            item_id = self.bwhelp.item_id(self.args['item'])
+            item_id = self.bwhelp.item_id(self.args['item'], \
+                                          self.args['folder'], \
+                                          self.args['collection'], \
+                                          self.args['organization'])
             self.copy_or_print(self.bwhelp.get_pass(item_id),'Password')
             # TODO: check that totp exists will need to refactor cache structure
             # TODO: timeout on input

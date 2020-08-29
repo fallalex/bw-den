@@ -3,6 +3,7 @@ import sys
 import pickle
 import pyotp
 import os
+import copy
 from .denConf import denConf
 from .bwSession import bwSession
 
@@ -57,6 +58,7 @@ class bwHelper:
                 if self.config.pickle_path.is_file():
                     self.config.pickle_path.unlink()
         self.cache_redact()
+        self.cache_transform()
         if self.config.pickle:
             with open(self.config.redacted_pickle_path, 'wb') as f:
                 pickle.dump(self.cache_dict, f)
@@ -65,22 +67,34 @@ class bwHelper:
                 self.config.redacted_pickle_path.unlink()
         self.gpg.encrypt_to_file(json.dumps(self.cache_dict), self.config.cache_path)
 
-    #TODO: hmm this does not seem ideal...
     def cache_redact(self):
-        for obj_type in list(self.cache_dict.keys()):
+        assert(self.config.cache_obj_types == set(self.cache_dict.keys()))
+        for obj_type in self.config.cache_obj_types:
             for obj_idx in range(len(self.cache_dict[obj_type])):
+                for k in self.config.cache_obj_fields_redact:
+                    exists, value = _findkey(self.cache_dict[obj_type][obj_idx], k)
+                    if exists:
+                        self.cache_dict[obj_type][obj_idx][k] = bool(value)
                 for k in list(self.cache_dict[obj_type][obj_idx].keys()):
-                    if k not in self.config.cache_obj_fields:
+                    if k not in (self.config.cache_obj_fields | self.config.cache_obj_fields_redact):
                         del self.cache_dict[obj_type][obj_idx][k]
-                        continue
-                    # redact creds to bool
-                    if k in self.config.cache_obj_fields_redact:
-                        if k == 'login':
-                            self.cache_dict[obj_type][obj_idx]['password'] = bool(self.cache_dict[obj_type][obj_idx][k]['password'])
-                            self.cache_dict[obj_type][obj_idx]['totp'] = bool(self.cache_dict[obj_type][obj_idx][k]['totp'])
-                            del self.cache_dict[obj_type][obj_idx][k]
-                        else:
-                            self.cache_dict[obj_type][obj_idx][k] = bool(self.cache_dict[obj_type][obj_idx][k])
+
+    def cache_transform(self):
+        assert('items' in self.config.cache_obj_types)
+        assert(self.config.cache_obj_types == set(self.cache_dict.keys()))
+        types = copy.deepcopy(self.config.cache_obj_types)
+        types.remove('items')
+        assert(self.config.cache_obj_types != types)
+        for obj_type in types:
+            type_dict = {}
+            for obj in self.cache_dict[obj_type]:
+                assert(isinstance(obj, dict))
+                assert(len(obj))
+                assert('id' in obj)
+                temp = copy.deepcopy(obj)
+                del temp['id']
+                type_dict[obj['id']] = temp
+            self.cache_dict[obj_type] = type_dict
 
     def decrypt_cache(self):
         self.cache_dict = self.gpg.decrypt_file(self.config.cache_path)
@@ -96,9 +110,16 @@ class bwHelper:
         if obj_type == 'all':
             return json.dumps(self.cache_dict)
         names = set()
-        for obj in self.cache_dict[obj_type]:
-            assert('name' in obj)
-            names.add(obj['name'])
+        # list
+        if obj_type == 'items':
+            for obj in self.cache_dict[obj_type]:
+                assert('name' in obj)
+                names.add(obj['name'])
+        # dict
+        else:
+            for k, v in self.cache_dict[obj_type].items():
+                assert('name' in v)
+                names.add(v['name'])
         return '\n'.join(sorted(names))
 
     def get_pass(self, id):
@@ -106,10 +127,7 @@ class bwHelper:
 
     def get_totp(self, id):
         token = self.get_item(id, 'totp')
-        if token:
-            return pyotp.TOTP(token).now()
-        print("No TOTP")
-        os._exit(1)
+        return pyotp.TOTP(token).now()
 
     def field_exists(self, obj, field):
         return _findkey(obj, field)[0]
@@ -129,23 +147,51 @@ class bwHelper:
 
     def get_item(self, id, field=None):
         item = self.bwcli.get(id)
-        if field:
+        if field != None:
             exists, value = _findkey(item, field)
-            if not exists:
-                print("The field '{}' is not in id '{}'.".format(field, id))
+            if not exists or value == None:
+                print("The field '{}' is not in id '{}' or is NoneType.".format(field, id))
                 os._exit(1)
             return value
         return item
 
-    def item_id(self, name):
+    def item_str(self, item):
+        string = ''
+        #TODO: abstract key check
+        for k, v in item.items():
+            if k in {'folderId', 'organizationId', 'collectionIds'}:
+                pass
+            #WIP
+        return string
+
+
+    def item_id(self, name, folder=None, collection=None, organization=None):
         ids = []
         for i in self.cache_dict['items']:
             if name == i['name']:
-                ids.append(i['id'])
+                if folder != None:
+                    # 'No Folder' aka None is a folder
+                    if folder != 'No Folder' and i['folderId'] == None: continue
+                    if folder == 'No Folder' and i['folderId'] != None: continue
+                    if folder != 'No Folder' and self.cache_dict['folders'][i['folderId']]['name'] != folder: continue
+                if collection != None:
+                    if not len(i['collectionIds']) or i['organizationId'] == None: continue
+                    collections = [self.cache_dict['collections'][c]['name'] for c in i['collectionIds']]
+                    if collection not in collections: continue
+                if organization != None:
+                    if i['organizationId'] == None: continue
+                    if self.cache_dict['organizations'][i['organizationId']]['name'] != organization: continue
+                    # ensure matched collection also matches organization
+                    if collection:
+                        collections = [c for c in self.cache_dict['collections'] if c['organizationId'] == i['organizationId']]
+                        if not len(collections):
+                            continue
+                ids.append(i)
         if len(ids) == 1:
             return ids[0]
-        print("Failed to uniquely match id for '{}'".format(name))
+        print("Failed to match id for '{}'".format(name))
         for i in ids:
-            print(i)
+            print(self.item_str(i))
+            print()
         os._exit(1)
 

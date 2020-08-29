@@ -12,8 +12,8 @@ class denConf:
         self.fingerprint = 'C9CB0C945B583DD3E65DDC376B5C20C74C63902A'
         self.gpg_home = Path.home() / '.gnupg'
 
-        self.cache_obj_fields = {'id', 'name', 'folderId', 'organizationId', 'collectionIds', 'password', 'totp', 'login'}
-        self.cache_obj_fields_redact = {'password', 'totp','login'}
+        self.cache_obj_fields = {'id', 'name', 'folderId', 'organizationId', 'collectionIds'}
+        self.cache_obj_fields_redact = {'password', 'totp'}
         self.cache_obj_types = {'items', 'folders', 'collections', 'organizations'}
 
         self.cache_path = Path.home() / '.bw-cache.asc'
