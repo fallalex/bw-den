@@ -19,25 +19,25 @@ function _den () {
         folders)
             IFS=$'\n'
             for f in $(den -z folders); do
-                compadd -x 'Completing bitwarden folders' -J 'folders' $f
+                compadd -x '--- Completing Bitwarden Folders ---' -J 'folders' $f
             done
             ;;
         collections)
             IFS=$'\n'
             for c in $(den -z collections); do
-                compadd -x 'Completing bitwarden collections' -J 'collections' $c
+                compadd -x '--- Completing Bitwarden Collections ---' -J 'collections' $c
             done
             ;;
         organizations)
             IFS=$'\n'
             for o in $(den -z organizations); do
-                compadd -x 'Completing bitwarden organizations' -J 'organizations' $o
+                compadd -x '--- Completing Bitwarden Organizations ---' -J 'organizations' $o
             done
             ;;
         items)
             IFS=$'\n'
             for i in $(den -z items); do
-                compadd -x 'Completing bitwarden items' -J 'items' $i
+                compadd -x '--- Completing Bitwarden Items ---' -J 'items' $i
             done
             ;;
     esac

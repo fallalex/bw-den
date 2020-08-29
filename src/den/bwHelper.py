@@ -6,11 +6,25 @@ import os
 from .denConf import denConf
 from .bwSession import bwSession
 
-def _finditem(obj, key):
-    if key in obj: return (True, obj[key])
-    for k, v in obj.items():
-        if isinstance(v, dict):
-            exists, value = _finditem(v, key)
+def _findkey(obj, key):
+    """
+    This is only used on read in json. So only need to handle list, map, and non-iterables.
+    Looking for keys in maps that can be nested in lists or other maps.
+    Returns tuple of bool and value.
+    Value of key could be anything. Bool represents if key was found.
+    Limitation is this only returns the first matching key.
+    """
+    if isinstance(obj, list):
+        for v in obj:
+            # for custom fields in bitwarden
+            if 'name' in v and 'value' in v:
+                transform = {v['name']: v['value']}
+                exists, value = _findkey(transform, key)
+                if exists: return (exists, value)
+    if isinstance(obj, dict):
+        if key in obj: return (True, obj[key])
+        for k, v in obj.items():
+            exists, value = _findkey(v, key)
             if exists: return (exists, value)
     return (False, None)
 
@@ -77,7 +91,8 @@ class bwHelper:
         assert(self.config.cache_obj_types == set(self.cache_dict.keys()))
 
     def completion(self, obj_type):
-        assert(obj_type in self.config.cache_obj_types | {'all'})
+        assert(obj_type in (self.config.cache_obj_types | {'all'}))
+        # return the json for the cache
         if obj_type == 'all':
             return json.dumps(self.cache_dict)
         names = set()
@@ -96,10 +111,26 @@ class bwHelper:
         print("No TOTP")
         os._exit(1)
 
+    def field_exists(self, obj, field):
+        return _findkey(obj, field)[0]
+
+    def field_value(self, obj, field):
+        """
+        Get value of field. If does not exist returns NoneType.
+        Does not validate field exists.
+        """
+        return _findkey(obj, field)[1]
+
+    def get_field(self, obj, field):
+        """
+        Return Tuple(Bool exists, Object value)
+        """
+        return _findkey(obj, field)
+
     def get_item(self, id, field=None):
         item = self.bwcli.get(id)
         if field:
-            exists, value = _finditem(item, field)
+            exists, value = _findkey(item, field)
             if not exists:
                 print("The field '{}' is not in id '{}'.".format(field, id))
                 os._exit(1)
@@ -107,8 +138,14 @@ class bwHelper:
         return item
 
     def item_id(self, name):
+        ids = []
         for i in self.cache_dict['items']:
-            # This only finds the first match ignores any others
             if name == i['name']:
-                return i['id']
+                ids.append(i['id'])
+        if len(ids) == 1:
+            return ids[0]
+        print("Failed to uniquely match id for '{}'".format(name))
+        for i in ids:
+            print(i)
+        os._exit(1)
 
