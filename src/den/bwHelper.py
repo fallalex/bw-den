@@ -71,12 +71,12 @@ class bwHelper:
         assert(self.config.cache_obj_types == set(self.cache_dict.keys()))
         for obj_type in self.config.cache_obj_types:
             for obj_idx in range(len(self.cache_dict[obj_type])):
-                for k in self.config.cache_obj_fields_redact:
+                for k in [k for k,v in self.config.cache_item_fields.items() if 'redact' in v]:
                     exists, value = _findkey(self.cache_dict[obj_type][obj_idx], k)
                     if exists:
                         self.cache_dict[obj_type][obj_idx][k] = bool(value)
                 for k in list(self.cache_dict[obj_type][obj_idx].keys()):
-                    if k not in (self.config.cache_obj_fields | self.config.cache_obj_fields_redact):
+                    if k not in (self.config.cache_item_fields.keys()):
                         del self.cache_dict[obj_type][obj_idx][k]
 
     def cache_transform(self):
@@ -156,14 +156,16 @@ class bwHelper:
         return item
 
     def item_str(self, item):
-        string = ''
-        #TODO: abstract key check
+        temp = copy.deepcopy(item)
         for k, v in item.items():
-            if k in {'folderId', 'organizationId', 'collectionIds'}:
-                pass
-            #WIP
-        return string
-
+            y = self.config.cache_item_fields[k]
+            if 'lookup' in y:
+                if isinstance(v, list):
+                    temp[k] = [self.cache_dict[y['lookup']][x]['name'] for x in v]
+                else:
+                    if v:
+                        temp[k] = self.cache_dict[y['lookup']][v]['name']
+        return str({k:v for k,v in temp.items() if v})
 
     def item_id(self, name, folder=None, collection=None, organization=None):
         ids = []
@@ -188,10 +190,9 @@ class bwHelper:
                             continue
                 ids.append(i)
         if len(ids) == 1:
-            return ids[0]
+            return ids[0]['id']
         print("Failed to match id for '{}'".format(name))
         for i in ids:
             print(self.item_str(i))
-            print()
         os._exit(1)
 
