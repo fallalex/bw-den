@@ -38,9 +38,9 @@ class bwCLI:
             return True
         return False
 
-    def call(self, args, session=True):
+    def call(self, args, session=True, goodcodes=[0]):
         rc, out, err = self._call(args, session)
-        if rc != 0:
+        if rc not in goodcodes:
             self.error(args[0], rc, out, err, session)
         else:
             return out
@@ -85,7 +85,7 @@ class bwCLI:
         return self._call(['unlock', passphrase, '--raw'], False)
 
     def lock(self):
-        return self.call(['lock'], False)
+        return self.call(['lock'], False, [0,1])
 
     def sync(self):
         return self.call(['sync'])

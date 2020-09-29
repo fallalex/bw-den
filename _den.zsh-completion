@@ -1,4 +1,4 @@
-#compdef den
+#compdef den _den
 
 # bitwarden-cli has completion
 # eval "$(bw completion --shell zsh); compdef _bw bw;"
