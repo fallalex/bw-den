@@ -35,3 +35,8 @@ Might want to break away from the general bitwarden-cli at somepoint but it migh
 https://community.bitwarden.com/t/bitwarden-rest-api-for-automated-secrets-management-on-self-hosted-server/1168
 
 https://bitbucket.org/vinay.sajip/python-gnupg/src/master/
+
+Local install
+
+    pip3 install .;  pip3 install -r requirements.txt
+
