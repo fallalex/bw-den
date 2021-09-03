@@ -66,11 +66,16 @@ class bwCLI:
         # https://stackoverflow.com/questions/18421757/live-output-from-subprocess-command
         # https://docs.pyfilesystem.org/en/latest/reference/memoryfs.html
         # neiter work need fileno() for the object
+        out = ''
         with tempfile.NamedTemporaryFile() as tmp:
             writer = open(tmp.name, 'wb')
             reader = open(tmp.name, 'rb')
             bw_proc = Popen(cmd, shell=False, stdin=PIPE, stdout=PIPE, stderr=writer)
             while bw_proc.poll() is None:
+                # you have to read stdout live other will there can be a deadlock when the
+                # child process generates enough output to a pipe such that it blocks
+                # waiting for the OS pipe buffer to accept more data
+                out += bw_proc.stdout.read().decode('utf-8')
                 time.sleep(0.1)
                 err = reader.read().decode('utf-8')
                 if '? Master password:' in err:
@@ -78,7 +83,6 @@ class bwCLI:
                     try: bw_proc.stdin.flush()
                     except BrokenPipeError as e:
                         pass
-        out = bw_proc.stdout.read().decode('utf-8')
         return (bw_proc.returncode, out, err)
 
     def unlock(self, passphrase):
