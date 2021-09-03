@@ -61,29 +61,35 @@ class bwCLI:
         cmd.extend(args)
         if session:
             cmd.extend(['--session', self.bwsess.session_token])
-        # The auto password prompt cant be disabled :(
-        # was wanting to use a in memory file but gave up
-        # https://stackoverflow.com/questions/18421757/live-output-from-subprocess-command
-        # https://docs.pyfilesystem.org/en/latest/reference/memoryfs.html
-        # neiter work need fileno() for the object
-        out = ''
-        with tempfile.NamedTemporaryFile() as tmp:
-            writer = open(tmp.name, 'wb')
-            reader = open(tmp.name, 'rb')
-            bw_proc = Popen(cmd, shell=False, stdin=PIPE, stdout=PIPE, stderr=writer)
-            while bw_proc.poll() is None:
-                # you have to read stdout live other will there can be a deadlock when the
-                # child process generates enough output to a pipe such that it blocks
-                # waiting for the OS pipe buffer to accept more data
-                out += bw_proc.stdout.read().decode('utf-8')
-                time.sleep(0.1)
-                err = reader.read().decode('utf-8')
-                if '? Master password:' in err:
-                    bw_proc.stdin.write(b'\n')
-                    try: bw_proc.stdin.flush()
-                    except BrokenPipeError as e:
-                        pass
-        return (bw_proc.returncode, out, err)
+        # # The auto password prompt cant be disabled :(
+        # # was wanting to use a in memory file but gave up
+        # # https://stackoverflow.com/questions/18421757/live-output-from-subprocess-command
+        # # https://docs.pyfilesystem.org/en/latest/reference/memoryfs.html
+        # # neiter work need fileno() for the object
+        # out = ''
+        # with tempfile.NamedTemporaryFile() as tmp:
+        #     writer = open(tmp.name, 'wb')
+        #     reader = open(tmp.name, 'rb')
+        #     bw_proc = Popen(cmd, shell=False, stdin=PIPE, stdout=PIPE, stderr=writer)
+        #     while bw_proc.poll() is None:
+        #         # you have to read stdout live other will there can be a deadlock when the
+        #         # child process generates enough output to a pipe such that it blocks
+        #         # waiting for the OS pipe buffer to accept more data
+        #         out += bw_proc.stdout.read().decode('utf-8')
+        #         time.sleep(0.1)
+        #         err = reader.read().decode('utf-8')
+        #         if '? Master password:' in err:
+        #             bw_proc.stdin.write(b'\n')
+        #             try: bw_proc.stdin.flush()
+        #             except BrokenPipeError as e:
+        #                 pass
+        bw_proc = Popen(cmd, shell=False, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        try:
+            out, err = bw_proc.communicate(timeout=15)
+        except TimeoutExpired:
+            proc.kill()
+            out, err = proc.communicate()
+        return (bw_proc.returncode, out.decode('utf-8'), err.decode('utf-8'))
 
     def unlock(self, passphrase):
         return self._call(['unlock', passphrase, '--raw'], False)
